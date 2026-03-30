@@ -1,6 +1,6 @@
 # CodeReview-Agent
 
-> 基于 Claude claude-opus-4-6 的多智能体 AI 代码审查系统。
+> 多智能体 AI 代码审查系统
 > 输入一个 GitHub PR URL，自动拉取 diff、并行运行四个专项审查 Agent，最终输出结构化报告并可回写至 GitHub。
 
 ---
