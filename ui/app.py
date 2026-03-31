@@ -331,7 +331,8 @@ def _inject_css() -> None:
 def _http_client() -> httpx.Client:
     return httpx.Client(
         base_url=API_BASE,
-        timeout=15.0,
+        timeout=httpx.Timeout(connect=3.0, read=10.0, write=5.0, pool=2.0),
+        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
         headers={"Connection": "keep-alive"},
     )
 
