@@ -126,7 +126,6 @@ def _inject_css() -> None:
     st.markdown(
         """
         <style>
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
           :root {
             --panel: rgba(255, 250, 242, 0.88);
             --panel-strong: #fff5e8;
@@ -140,7 +139,7 @@ def _inject_css() -> None:
             --shadow: 0 20px 40px rgba(35, 26, 20, 0.08);
             --radius: 18px;
           }
-          html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+          html, body, [class*="css"] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
           .stApp {
             background:
               radial-gradient(circle at top left, rgba(255, 210, 179, 0.65) 0%, transparent 28%),
