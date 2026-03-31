@@ -361,19 +361,26 @@ def _cached_status(task_id: int, include_results: bool) -> dict[str, Any] | None
     return _safe_get(f"/review/{task_id}", params={"include_results": str(include_results).lower()})
 
 
-@st.cache_data(ttl=8, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_completed_report(task_id: int) -> dict[str, Any] | None:
+    """Long-lived cache for completed/failed tasks whose results never change."""
+    return _safe_get(f"/review/{task_id}", params={"include_results": "true"})
+
+
+@st.cache_data(ttl=30, show_spinner=False)
 def _cached_recent_tasks(limit: int) -> list[dict[str, Any]]:
     data = _safe_get("/reviews/recent", params={"limit": limit})
     return data or []
 
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _cached_dashboard(days: int) -> dict[str, Any] | None:
     return _safe_get("/stats/dashboard", params={"days": days})
 
 
 def _clear_ui_caches() -> None:
     _cached_status.clear()
+    _cached_completed_report.clear()
     _cached_recent_tasks.clear()
     _cached_dashboard.clear()
 
@@ -752,7 +759,13 @@ def _render_tasks_page() -> None:
                 unsafe_allow_html=True,
             )
         else:
-            data = _cached_status(selected_id, True)
+            # Use short-TTL cache for in-progress tasks; long-TTL for completed/failed
+            _peek = _cached_status(selected_id, False)
+            _status = (_peek or {}).get("status", "")
+            if _status in {"completed", "failed"}:
+                data = _cached_completed_report(selected_id)
+            else:
+                data = _cached_status(selected_id, True)
             if data is None:
                 st.info(f"Could not load task #{selected_id}.")
             else:
