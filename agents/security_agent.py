@@ -12,12 +12,12 @@ Checks performed on *added* lines only:
 """
 from __future__ import annotations
 
-import os
 import textwrap
 import time
 from typing import Any, Dict, List
 
-import anthropic
+from config import settings
+from llm.provider import LLMResponse, get_provider
 
 from agents.base import AgentResult, BaseReviewAgent, FileDiff, Finding
 from tools.semgrep_runner import SemgrepRunner, SecurityIssue
@@ -26,7 +26,6 @@ from tools.semgrep_runner import SemgrepRunner, SecurityIssue
 # Constants
 # ---------------------------------------------------------------------------
 
-MODEL = "claude-opus-4-6"
 MAX_ADDED_LINES_PER_CHUNK = 200
 
 _SEVERITY_MAP = {
@@ -96,11 +95,26 @@ REPORT_FINDINGS_TOOL: Dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 class SecurityAgent(BaseReviewAgent):
-    """Review agent that detects security vulnerabilities."""
+    """Security review agent.
 
-    def __init__(self, api_key: str | None = None) -> None:
-        self._client = anthropic.Anthropic(
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    Input: ``FileDiff``
+    Output: ``AgentResult`` with structured ``Finding`` entries
+    Strategy: Semgrep pre-scan plus LLM validation
+    """
+
+    def __init__(
+        self,
+        provider: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        llm_config = settings.get_llm_config("SECURITY_AGENT")
+        self._model = model or llm_config.model
+        self._provider = get_provider(
+            provider=provider or llm_config.provider,
+            api_key=api_key or llm_config.api_key or None,
+            base_url=base_url or llm_config.base_url or None,
         )
         self._semgrep = SemgrepRunner()
 
@@ -210,30 +224,22 @@ class SecurityAgent(BaseReviewAgent):
             Call the `report_security_findings` tool with your results.
         """)
 
-        response = self._client.messages.create(
-            model=MODEL,
+        response = self._provider.messages_create(
+            model=self._model,
             max_tokens=2048,
             tools=[REPORT_FINDINGS_TOOL],
             tool_choice={"type": "auto"},
             messages=[{"role": "user", "content": prompt}],
         )
-
-        tokens = (
-            response.usage.input_tokens + response.usage.output_tokens
-            if hasattr(response, "usage")
-            else 0
-        )
         findings = self._parse_findings(response, filename)
-        return findings, tokens
+        return findings, response.total_tokens
 
     # ------------------------------------------------------------------
     @staticmethod
     def _parse_findings(
-        response: Any, filename: str
+        response: "LLMResponse", filename: str
     ) -> List[Finding]:
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
+        for block in response.tool_calls:
             if block.name != "report_security_findings":
                 continue
             raw: List[Dict[str, Any]] = block.input.get("findings", [])

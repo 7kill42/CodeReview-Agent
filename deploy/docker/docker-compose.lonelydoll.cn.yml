@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:15
+    container_name: codereview-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: codereview
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: codereview-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: codereview-api
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - db
+      - redis
+    expose:
+      - "8000"
+
+  ui:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: codereview-ui
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    command: streamlit run ui/app.py --server.address 0.0.0.0 --server.port 8501
+    depends_on:
+      - api
+    expose:
+      - "8501"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: codereview-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+      - ui
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.lonelydoll.cn.docker.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  postgres_data:
+  redis_data:

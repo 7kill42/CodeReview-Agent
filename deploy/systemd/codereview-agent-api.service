@@ -1,0 +1,15 @@
+[Unit]
+Description=CodeReview-Agent FastAPI service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/project/CodeReview-Agent
+EnvironmentFile=/root/project/CodeReview-Agent/.env.production
+ExecStart=/root/project/CodeReview-Agent/.venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

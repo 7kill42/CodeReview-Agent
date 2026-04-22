@@ -12,12 +12,12 @@ Checks performed on *added* lines only:
 """
 from __future__ import annotations
 
-import os
 import textwrap
 import time
 from typing import Any, Dict, List
 
-import anthropic
+from config import settings
+from llm.provider import LLMResponse, get_provider
 
 from agents.base import AgentResult, BaseReviewAgent, FileDiff, Finding
 from tools.ast_parser import ASTParser
@@ -26,7 +26,6 @@ from tools.ast_parser import ASTParser
 # Constants
 # ---------------------------------------------------------------------------
 
-MODEL = "claude-opus-4-6"
 MAX_ADDED_LINES_PER_CHUNK = 200
 
 # ---------------------------------------------------------------------------
@@ -153,11 +152,26 @@ def _chunk_added_lines(
 # ---------------------------------------------------------------------------
 
 class LogicAgent(BaseReviewAgent):
-    """Detects logical defects using AST analysis and Claude."""
+    """Logic review agent.
 
-    def __init__(self, api_key: str | None = None) -> None:
-        self._client = anthropic.Anthropic(
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    Input: ``FileDiff``
+    Output: ``AgentResult`` with structured ``Finding`` entries
+    Strategy: AST preprocessing plus LLM review
+    """
+
+    def __init__(
+        self,
+        provider: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        llm_config = settings.get_llm_config("LOGIC_AGENT")
+        self._model = model or llm_config.model
+        self._provider = get_provider(
+            provider=provider or llm_config.provider,
+            api_key=api_key or llm_config.api_key or None,
+            base_url=base_url or llm_config.base_url or None,
         )
         self._parser = ASTParser()
 
@@ -210,27 +224,23 @@ class LogicAgent(BaseReviewAgent):
         prompt = _build_prompt(
             file_diff, chunk_added, function_list, has_error_handling, complexity
         )
-        response = self._client.messages.create(
-            model=MODEL,
+        response = self._provider.messages_create(
+            model=self._model,
             max_tokens=4096,
             tools=[REPORT_FINDINGS_TOOL],
             tool_choice={"type": "any"},
             messages=[{"role": "user", "content": prompt}],
         )
-        tokens = response.usage.input_tokens + response.usage.output_tokens
-        return self._parse_tool_response(response, file_diff.filename), tokens
+        return self._parse_tool_response(response, file_diff.filename), response.total_tokens
 
     @staticmethod
     def _parse_tool_response(
-        response: anthropic.types.Message,
+        response: "LLMResponse",
         filename: str,
     ) -> List[Finding]:
-        """Extract findings from the Claude tool-use response."""
-        for block in response.content:
-            if (
-                block.type == "tool_use"
-                and block.name == "report_logic_findings"
-            ):
+        """Extract findings from the LLM tool-use response."""
+        for block in response.tool_calls:
+            if block.name == "report_logic_findings":
                 raw: List[Dict[str, Any]] = block.input.get("findings", [])
                 results: List[Finding] = []
                 for item in raw:

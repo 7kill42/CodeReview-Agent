@@ -1,10 +1,13 @@
-"""LangGraph state machine for the CodeReview-Agent pipeline.
+"""Experimental LangGraph state machine for the CodeReview-Agent pipeline.
 
 The graph models the full review workflow:
   fetch_diff → dispatch_agents → [run_style, run_security, run_logic, run_performance]
               → aggregate → save_results → END
 
 Any node that sets state["error"] is routed to error_handler → END.
+
+This path is not currently used by the FastAPI entrypoints. The main runtime
+continues to go through ``agents.orchestrator.Orchestrator``.
 """
 from __future__ import annotations
 
@@ -27,7 +30,7 @@ from storage.models import (
     ReviewTask,
     TaskStatus,
 )
-from tools.github_client import GitHubClient
+from tools.scm_factory import get_scm_client
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +66,11 @@ class ReviewState(TypedDict):
 # ---------------------------------------------------------------------------
 
 def _make_agents() -> Dict[str, StyleAgent | SecurityAgent | LogicAgent | PerformanceAgent]:
-    key = settings.ANTHROPIC_API_KEY
     return {
-        "StyleAgent":       StyleAgent(api_key=key),
-        "SecurityAgent":    SecurityAgent(api_key=key),
-        "LogicAgent":       LogicAgent(api_key=key),
-        "PerformanceAgent": PerformanceAgent(api_key=key),
+        "StyleAgent":       StyleAgent(),
+        "SecurityAgent":    SecurityAgent(),
+        "LogicAgent":       LogicAgent(),
+        "PerformanceAgent": PerformanceAgent(),
     }
 
 
@@ -82,21 +84,21 @@ def _safe_update(state: ReviewState, updates: dict) -> ReviewState:
 # ---------------------------------------------------------------------------
 
 def fetch_diff(state: ReviewState) -> ReviewState:
-    """Call GitHubClient to retrieve the PR diff and populate file_diffs."""
+    """Call the SCM client to retrieve the diff and populate file_diffs."""
     try:
-        client = GitHubClient()
         pr_url = state["pr_url"]
-        pr_diff = client.get_pr_diff(pr_url)
-        pr_metadata = client.get_pr_metadata(pr_url)
+        scm = get_scm_client(pr_url)
+        change_set = scm.get_change_set(pr_url)
+        pr_metadata = scm.get_metadata(pr_url)
         file_diffs = [
             FileDiff(
                 filename=f.filename,
                 language=f.language,
                 added_lines=f.added_lines,
                 removed_lines=f.removed_lines,
-                raw_diff=getattr(f, "patch", ""),
+                raw_diff=f.raw_diff,
             ).model_dump()
-            for f in pr_diff.files
+            for f in change_set
             if f.language in SUPPORTED_LANGUAGES
         ]
         return _safe_update(state, {"file_diffs": file_diffs, "pr_metadata": pr_metadata, "error": None})
@@ -187,7 +189,7 @@ def aggregate(state: ReviewState) -> ReviewState:
             for rd in result_dicts:
                 all_results.append(AgentResult(**rd))
 
-        agg = Aggregator(api_key=settings.ANTHROPIC_API_KEY)
+        agg = Aggregator()
         report = agg.aggregate(
             all_results,
             pr_url=state["pr_url"],
@@ -253,7 +255,8 @@ async def _save_results_async(state: ReviewState) -> None:
     await set_task_status(task_id, TaskStatus.COMPLETED.value)
 
     # Post markdown report as a PR comment
-    GitHubClient().post_review_comment(state["pr_url"], report.markdown_report)
+    scm = get_scm_client(state["pr_url"])
+    scm.post_summary_comment(state["pr_url"], report.markdown_report)
 
 
 # ---------------------------------------------------------------------------

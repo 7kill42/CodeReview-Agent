@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 from typing import List
 
 from pydantic import BaseModel
 from github import Github, GithubException
 
+from agents.base import FileDiff
 from config import settings
+from tools.scm_base import SCMClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +36,6 @@ _EXT_TO_LANG: dict[str, str] = {
 def _detect_language(filename: str) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return _EXT_TO_LANG.get(ext, "unknown")
-
-
-# ---------------------------------------------------------------------------
-# Data models
-# ---------------------------------------------------------------------------
-
-class FileDiff(BaseModel):
-    filename: str
-    language: str
-    patch: str
-    added_lines: List[tuple[int, str]] = []
-    removed_lines: List[tuple[int, str]] = []
 
 
 class PRDiff(BaseModel):
@@ -107,7 +98,7 @@ def _parse_pr_url(pr_url: str) -> tuple[str, str, int]:
 # GitHubClient
 # ---------------------------------------------------------------------------
 
-class GitHubClient:
+class GitHubClient(SCMClient):
     """Thin wrapper around PyGithub for PR-related operations."""
 
     def __init__(self, token: str | None = None) -> None:
@@ -119,14 +110,14 @@ class GitHubClient:
         return self._gh.get_repo(f"{owner}/{repo}").get_pull(number)
 
     # ------------------------------------------------------------------
-    def get_pr_diff(self, pr_url: str) -> PRDiff:
-        """Fetch PR metadata and per-file diffs.
+    def get_change_set(self, target_url: str) -> list[FileDiff]:
+        """Fetch per-file diffs for a GitHub Pull Request.
 
         Raises:
             GithubException: If GitHub rejects the request.
-            ValueError: If *pr_url* is invalid.
+            ValueError: If *target_url* is invalid.
         """
-        pr = self._get_pr(pr_url)
+        pr = self._get_pr(target_url)
         files: list[FileDiff] = []
         for f in pr.get_files():
             patch = f.patch or ""
@@ -134,22 +125,27 @@ class GitHubClient:
             files.append(FileDiff(
                 filename=f.filename,
                 language=_detect_language(f.filename),
-                patch=patch,
                 added_lines=added,
                 removed_lines=removed,
+                raw_diff=patch,
             ))
+        return files
+
+    def get_pr_diff(self, pr_url: str) -> PRDiff:
+        """Backward-compatible wrapper returning both diff files and metadata."""
+        pr = self._get_pr(pr_url)
         return PRDiff(
-            files=files,
+            files=self.get_change_set(pr_url),
             pr_title=pr.title or "",
             pr_description=pr.body or "",
             author=pr.user.login if pr.user else "",
         )
 
     # ------------------------------------------------------------------
-    def get_pr_metadata(self, pr_url: str) -> dict:
+    def get_metadata(self, target_url: str) -> dict[str, Any]:
         """Return a flat dict of PR metadata fields."""
         try:
-            pr = self._get_pr(pr_url)
+            pr = self._get_pr(target_url)
             return {
                 "number": pr.number,
                 "title": pr.title,
@@ -167,25 +163,33 @@ class GitHubClient:
                 "url": pr.html_url,
             }
         except (GithubException, ValueError, Exception) as exc:
-            logger.warning("Failed to fetch PR metadata for %s: %s", pr_url, exc)
+            logger.warning("Failed to fetch PR metadata for %s: %s", target_url, exc)
             return {}
 
+    def get_pr_metadata(self, pr_url: str) -> dict[str, Any]:
+        """Backward-compatible alias for metadata lookup."""
+        return self.get_metadata(pr_url)
+
     # ------------------------------------------------------------------
-    def post_review_comment(self, pr_url: str, body: str) -> bool:
+    def post_summary_comment(self, target_url: str, body: str) -> bool:
         """Post a top-level review comment on the PR. Returns True on success."""
         try:
-            pr = self._get_pr(pr_url)
+            pr = self._get_pr(target_url)
             pr.create_issue_comment(body)
             return True
         except (GithubException, ValueError, Exception):
             return False
 
+    def post_review_comment(self, pr_url: str, body: str) -> bool:
+        """Backward-compatible alias for top-level review comments."""
+        return self.post_summary_comment(pr_url, body)
+
     # ------------------------------------------------------------------
     def post_inline_review(
         self,
-        pr_url: str,
+        target_url: str,
         findings: list[dict],
-        summary_body: str = "",
+        summary: str = "",
     ) -> bool:
         """Create a GitHub Pull Request Review with per-finding inline comments.
 
@@ -196,7 +200,7 @@ class GitHubClient:
         comments appear in one batch. Returns True on success.
         """
         try:
-            pr = self._get_pr(pr_url)
+            pr = self._get_pr(target_url)
             # Build the head commit SHA for the review
             commit = pr.get_commits().reversed[0]
 
@@ -222,7 +226,7 @@ class GitHubClient:
 
             pr.create_review(
                 commit=commit,
-                body=summary_body,
+                body=summary,
                 event="COMMENT",
                 comments=comments,
             )
@@ -231,10 +235,10 @@ class GitHubClient:
             return False
 
     # ------------------------------------------------------------------
-    def get_head_commit_sha(self, pr_url: str) -> str | None:
+    def get_head_commit_sha(self, target_url: str) -> str | None:
         """Return the HEAD commit SHA of the PR, or None on error."""
         try:
-            pr = self._get_pr(pr_url)
+            pr = self._get_pr(target_url)
             return pr.head.sha
         except (GithubException, ValueError, Exception):
             return None

@@ -10,19 +10,13 @@ Steps:
 """
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
-import anthropic
 from pydantic import BaseModel
 
 from agents.base import AgentResult, Finding
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-MODEL = "claude-opus-4-6"
+from config import settings
+from llm.provider import get_provider
 
 AGENT_WEIGHTS: Dict[str, float] = {
     "SecurityAgent":     1.0,
@@ -75,9 +69,19 @@ class AggregatedReport(BaseModel):
 class Aggregator:
     """Merges AgentResult objects into a single AggregatedReport."""
 
-    def __init__(self, api_key: str | None = None) -> None:
-        self._client = anthropic.Anthropic(
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY")
+    def __init__(
+        self,
+        provider: str | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        llm_config = settings.get_llm_config("AGGREGATOR")
+        self._model = model or llm_config.model
+        self._provider = get_provider(
+            provider=provider or llm_config.provider,
+            api_key=api_key or llm_config.api_key or None,
+            base_url=base_url or llm_config.base_url or None,
         )
 
     # ------------------------------------------------------------------
@@ -270,12 +274,12 @@ class Aggregator:
         )
 
         try:
-            response = self._client.messages.create(
-                model=MODEL,
+            response = self._provider.messages_create(
+                model=self._model,
                 max_tokens=512,
                 messages=[{"role": "user", "content": prompt}],
             )
-            return response.content[0].text.strip()
+            return (response.text or "").strip()
         except Exception:  # noqa: BLE001
             # Fallback: generate a plain-text summary without Claude
             total = len(findings)

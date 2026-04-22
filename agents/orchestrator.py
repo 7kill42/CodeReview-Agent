@@ -26,7 +26,7 @@ from storage.models import (
     ReviewTask,
     TaskStatus,
 )
-from tools.github_client import GitHubClient
+from tools.scm_factory import get_scm_client
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ async def _run_one_agent(
     agent_name = type(agent).__name__
     try:
         result = await asyncio.wait_for(
-            agent.review(file_diff),
+            asyncio.to_thread(lambda: asyncio.run(agent.review(file_diff))),
             timeout=timeout,
         )
         await set_agent_result(task_id, agent_name, result.model_dump())
@@ -69,22 +69,21 @@ class Orchestrator:
     """Coordinates diff fetching, parallel agent execution, aggregation, and persistence."""
 
     def __init__(self) -> None:
-        api_key = settings.ANTHROPIC_API_KEY
         self.agents = [
-            StyleAgent(api_key=api_key),
-            SecurityAgent(api_key=api_key),
-            LogicAgent(api_key=api_key),
-            PerformanceAgent(api_key=api_key),
+            StyleAgent(),
+            SecurityAgent(),
+            LogicAgent(),
+            PerformanceAgent(),
         ]
-        self.aggregator = Aggregator(api_key=api_key)
-        self.github = GitHubClient()
+        self.aggregator = Aggregator()
 
     async def run(self, task_id: int, pr_url: str) -> None:
         """Main execution flow, started via asyncio.create_task()."""
         await set_task_status(task_id, TaskStatus.RUNNING.value)
+        scm = get_scm_client(pr_url)
 
         # --- 0. Dedup cache check ----------------------------------------
-        commit_sha: str | None = self.github.get_head_commit_sha(pr_url)
+        commit_sha: str | None = await asyncio.to_thread(scm.get_head_commit_sha, pr_url)
         if settings.ENABLE_DEDUP_CACHE and commit_sha:
             cached_id = await get_dedup_task_id(pr_url, commit_sha)
             if cached_id is not None and cached_id != task_id:
@@ -102,25 +101,19 @@ class Orchestrator:
 
         # --- 1. Fetch diff + metadata ------------------------------------
         try:
-            pr_diff = self.github.get_pr_diff(pr_url)
+            scm_file_diffs = await asyncio.to_thread(scm.get_change_set, pr_url)
         except Exception as exc:
             logger.error("[task=%s] Failed to fetch PR diff: %s", task_id, exc)
             await self._fail(task_id, str(exc))
             await notify_review_failed(pr_url, task_id, str(exc))
             return
 
-        pr_metadata = self.github.get_pr_metadata(pr_url)
+        pr_metadata = await asyncio.to_thread(scm.get_metadata, pr_url)
 
         # --- 2. Filter to supported languages ----------------------------
         file_diffs: List[FileDiff] = [
-            FileDiff(
-                filename=f.filename,
-                language=f.language,
-                added_lines=f.added_lines,
-                removed_lines=f.removed_lines,
-                raw_diff=getattr(f, "patch", ""),
-            )
-            for f in pr_diff.files
+            f
+            for f in scm_file_diffs
             if f.language in SUPPORTED_LANGUAGES
         ]
 
@@ -143,11 +136,12 @@ class Orchestrator:
         ]
 
         # --- 4. Aggregate ------------------------------------------------
-        report: AggregatedReport = self.aggregator.aggregate(
+        report: AggregatedReport = await asyncio.to_thread(
+            self.aggregator.aggregate,
             agent_results,
-            pr_url=pr_url,
-            task_id=task_id,
-            pr_metadata=pr_metadata,
+            pr_url,
+            task_id,
+            pr_metadata,
         )
 
         # --- 5. Store dedup cache entry --------------------------------
@@ -159,17 +153,18 @@ class Orchestrator:
 
         # --- 7. Post review comment to PR (top-level) ------------------
         if settings.ENABLE_PR_COMMENT:
-            ok = self.github.post_review_comment(pr_url, report.markdown_report)
+            ok = await asyncio.to_thread(scm.post_summary_comment, pr_url, report.markdown_report)
             if not ok:
                 logger.warning("[task=%s] Failed to post top-level PR comment", task_id)
 
         # --- 8. Post inline review comments ------------------------------
         if settings.ENABLE_INLINE_COMMENT and report.findings:
             findings_dicts = [f.model_dump() for f in report.findings]
-            ok = self.github.post_inline_review(
+            ok = await asyncio.to_thread(
+                scm.post_inline_review,
                 pr_url,
                 findings_dicts,
-                summary_body=report.executive_summary[:500],
+                report.executive_summary[:500],
             )
             if not ok:
                 logger.warning("[task=%s] Failed to post inline review", task_id)

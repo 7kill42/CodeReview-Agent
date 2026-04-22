@@ -1,6 +1,6 @@
 """Tests for StyleAgent.
 
-The tests mock the Anthropic client so no real API key is needed.
+The tests mock the provider client so no real API key is needed.
 Three scenarios are covered:
   1. Clean code  → no findings
   2. Naming problems  → at least one 'naming' finding
@@ -8,7 +8,6 @@ Three scenarios are covered:
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -32,10 +31,11 @@ def _make_tool_use_block(findings: list[dict[str, Any]]) -> MagicMock:
 
 
 def _make_response(findings: list[dict[str, Any]]) -> MagicMock:
-    """Return a mock anthropic Message containing one tool-use block."""
+    """Return a mock provider response containing one tool-use block."""
     resp = MagicMock()
-    resp.content = [_make_tool_use_block(findings)]
-    resp.usage = MagicMock(input_tokens=100, output_tokens=50)
+    resp.tool_calls = [_make_tool_use_block(findings)]
+    resp.text = None
+    resp.total_tokens = 150
     return resp
 
 
@@ -58,7 +58,7 @@ async def test_no_findings_for_clean_code():
     mock_resp = _make_response([])   # model reports nothing
 
     agent = StyleAgent(api_key="test-key")
-    with patch.object(agent._client.messages, "create", return_value=mock_resp):
+    with patch.object(agent._provider, "messages_create", return_value=mock_resp):
         result = await agent.review(_diff(added))
 
     assert result.agent_name == "StyleAgent"
@@ -109,7 +109,7 @@ async def test_naming_findings():
     mock_resp = _make_response(raw_findings)
 
     agent = StyleAgent(api_key="test-key")
-    with patch.object(agent._client.messages, "create", return_value=mock_resp):
+    with patch.object(agent._provider, "messages_create", return_value=mock_resp):
         result = await agent.review(_diff(added))
 
     naming_findings = [f for f in result.findings if f.category == "naming"]
@@ -161,7 +161,7 @@ async def test_magic_number_and_missing_docstring():
     mock_resp = _make_response(raw_findings)
 
     agent = StyleAgent(api_key="test-key")
-    with patch.object(agent._client.messages, "create", return_value=mock_resp):
+    with patch.object(agent._provider, "messages_create", return_value=mock_resp):
         result = await agent.review(_diff(added))
 
     categories = {f.category for f in result.findings}

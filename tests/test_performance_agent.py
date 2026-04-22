@@ -1,6 +1,6 @@
 """Tests for PerformanceAgent.
 
-The tests mock the Anthropic client so no real API key is needed.
+The tests mock the provider client so no real API key is needed.
 Three scenarios are covered:
   1. Clean code  → no findings
   2. N+1 query pattern  → at least one 'n_plus_one' finding
@@ -8,7 +8,6 @@ Three scenarios are covered:
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -32,10 +31,11 @@ def _make_tool_use_block(findings: list[dict[str, Any]]) -> MagicMock:
 
 
 def _make_response(findings: list[dict[str, Any]]) -> MagicMock:
-    """Return a mock anthropic Message containing one tool-use block."""
+    """Return a mock provider response containing one tool-use block."""
     resp = MagicMock()
-    resp.content = [_make_tool_use_block(findings)]
-    resp.usage = MagicMock(input_tokens=100, output_tokens=50)
+    resp.tool_calls = [_make_tool_use_block(findings)]
+    resp.text = None
+    resp.total_tokens = 150
     return resp
 
 
@@ -58,7 +58,7 @@ async def test_no_findings_for_clean_code():
     mock_resp = _make_response([])  # model reports nothing
 
     agent = PerformanceAgent(api_key="test-key")
-    with patch.object(agent._client.messages, "create", return_value=mock_resp):
+    with patch.object(agent._provider, "messages_create", return_value=mock_resp):
         result = await agent.review(_diff(added))
 
     assert result.findings == []
@@ -101,7 +101,7 @@ async def test_n_plus_one_detected():
     mock_resp = _make_response(raw_findings)
 
     agent = PerformanceAgent(api_key="test-key")
-    with patch.object(agent._client.messages, "create", return_value=mock_resp):
+    with patch.object(agent._provider, "messages_create", return_value=mock_resp):
         result = await agent.review(_diff(added))
 
     assert len(result.findings) == 1
@@ -145,7 +145,7 @@ async def test_blocking_call_in_async_detected():
     mock_resp = _make_response(raw_findings)
 
     agent = PerformanceAgent(api_key="test-key")
-    with patch.object(agent._client.messages, "create", return_value=mock_resp):
+    with patch.object(agent._provider, "messages_create", return_value=mock_resp):
         result = await agent.review(_diff(added))
 
     categories = {f.category for f in result.findings}

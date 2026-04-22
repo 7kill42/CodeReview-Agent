@@ -56,6 +56,14 @@ class TaskStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+TASK_STATUS_ENUM = Enum(
+    TaskStatus,
+    name="task_status",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    validate_strings=True,
+)
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -68,7 +76,7 @@ class ReviewTask(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     pr_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus, name="task_status"),
+        TASK_STATUS_ENUM,
         nullable=False,
         default=TaskStatus.PENDING,
         server_default=TaskStatus.PENDING.value,

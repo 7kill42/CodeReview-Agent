@@ -60,19 +60,19 @@ def _agent_result(
 
 
 def _make_summary_response(text: str = "All looks good.") -> MagicMock:
-    """Mock anthropic Message for executive-summary calls."""
-    block = MagicMock()
-    block.text = text
+    """Mock provider response for executive-summary calls."""
     resp = MagicMock()
-    resp.content = [block]
+    resp.text = text
+    resp.tool_calls = []
+    resp.total_tokens = 0
     return resp
 
 
 def _aggregator_with_mock_summary(summary_text: str = "Summary.") -> tuple[Aggregator, MagicMock]:
-    """Return an Aggregator whose Claude client is mocked."""
+    """Return an Aggregator whose provider is mocked."""
     agg = Aggregator(api_key="test-key")
     mock_create = MagicMock(return_value=_make_summary_response(summary_text))
-    agg._client.messages.create = mock_create
+    agg._provider.messages_create = mock_create
     return agg, mock_create
 
 

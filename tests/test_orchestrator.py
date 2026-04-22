@@ -1,12 +1,12 @@
 """Tests for Orchestrator.
 
-All external dependencies (DB, Redis, GitHub, Agents) are mocked so the
+All external dependencies (DB, Redis, SCM, Agents) are mocked so the
 tests run without any live infrastructure.
 
 Scenarios:
   1. Successful run: 4 agents return results, DB + Redis updated correctly.
   2. Agent timeout: timed-out agent is skipped, others still processed.
-  3. GitHub diff fetch failure: task is marked FAILED, run exits early.
+  3. SCM diff fetch failure: task is marked FAILED, run exits early.
 """
 from __future__ import annotations
 
@@ -52,16 +52,16 @@ def _file_diff() -> FileDiff:
     )
 
 
-def _mock_pr_diff(language: str = "python") -> MagicMock:
-    fd = MagicMock()
-    fd.filename = "app.py"
-    fd.language = language
-    fd.added_lines = [(1, "x = 1")]
-    fd.removed_lines = []
-    fd.patch = ""
-    pr = MagicMock()
-    pr.files = [fd]
-    return pr
+def _mock_change_set(language: str = "python") -> list[FileDiff]:
+    return [
+        FileDiff(
+            filename="app.py",
+            language=language,
+            added_lines=[(1, "x = 1")],
+            removed_lines=[],
+            raw_diff="",
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -85,16 +85,18 @@ async def test_run_success():
 
     orchestrator.agents = mock_agents
     orchestrator.aggregator = MagicMock()
-    orchestrator.github = MagicMock()
-    orchestrator.github.get_head_commit_sha.return_value = None
-
     mock_report = MagicMock()
     mock_report.markdown_report = "# Report"
+    mock_report.executive_summary = "Summary"
     mock_report.model_dump_json.return_value = "{}"
     orchestrator.aggregator.aggregate.return_value = mock_report
-    orchestrator.github.get_pr_diff.return_value = _mock_pr_diff()
+    scm = MagicMock()
+    scm.get_head_commit_sha.return_value = None
+    scm.get_change_set.return_value = _mock_change_set()
+    scm.get_metadata.return_value = {}
 
     with (
+        patch("agents.orchestrator.get_scm_client", return_value=scm),
         patch("agents.orchestrator.set_task_status", new_callable=AsyncMock) as mock_set_status,
         patch("agents.orchestrator.set_agent_result", new_callable=AsyncMock),
         patch("agents.orchestrator.get_dedup_task_id", new_callable=AsyncMock, return_value=None),
@@ -149,16 +151,18 @@ async def test_run_agent_timeout():
 
     orchestrator.agents = [good_agent, slow_agent]
     orchestrator.aggregator = MagicMock()
-    orchestrator.github = MagicMock()
-    orchestrator.github.get_head_commit_sha.return_value = None
-    orchestrator.github.get_pr_diff.return_value = _mock_pr_diff()
-
     mock_report = MagicMock()
     mock_report.markdown_report = "# Report"
+    mock_report.executive_summary = "Summary"
     mock_report.model_dump_json.return_value = "{}"
     orchestrator.aggregator.aggregate.return_value = mock_report
+    scm = MagicMock()
+    scm.get_head_commit_sha.return_value = None
+    scm.get_change_set.return_value = _mock_change_set()
+    scm.get_metadata.return_value = {}
 
     with (
+        patch("agents.orchestrator.get_scm_client", return_value=scm),
         patch("agents.orchestrator.set_task_status", new_callable=AsyncMock),
         patch("agents.orchestrator.set_agent_result", new_callable=AsyncMock),
         patch("agents.orchestrator.get_dedup_task_id", new_callable=AsyncMock, return_value=None),
@@ -189,16 +193,17 @@ async def test_run_agent_timeout():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_github_failure():
-    """If fetching the PR diff raises, the task is marked FAILED and run exits."""
+async def test_run_scm_failure():
+    """If fetching the change set raises, the task is marked FAILED and run exits."""
     orchestrator = Orchestrator.__new__(Orchestrator)
     orchestrator.agents = []
     orchestrator.aggregator = MagicMock()
-    orchestrator.github = MagicMock()
-    orchestrator.github.get_head_commit_sha.return_value = None
-    orchestrator.github.get_pr_diff.side_effect = RuntimeError("GitHub API down")
+    scm = MagicMock()
+    scm.get_head_commit_sha.return_value = None
+    scm.get_change_set.side_effect = RuntimeError("SCM API down")
 
     with (
+        patch("agents.orchestrator.get_scm_client", return_value=scm),
         patch("agents.orchestrator.set_task_status", new_callable=AsyncMock) as mock_set_status,
         patch("agents.orchestrator.set_agent_result", new_callable=AsyncMock),
         patch("agents.orchestrator.get_dedup_task_id", new_callable=AsyncMock, return_value=None),
