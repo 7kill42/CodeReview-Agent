@@ -1,10 +1,16 @@
 # CodeReview-Agent
 
-Multi-agent code review framework for GitHub pull requests, with specialized review agents, orchestration, deduplication, severity arbitration, and structured report generation.
+An interview-ready AI engineering project that automates GitHub pull request review with specialized agents, async orchestration, severity arbitration, and structured report generation.
 
-The project is intentionally framed as an **agent framework first** and a **demo application second**. The core value is the agent pipeline:
+This repository is positioned as an **agent framework first** and a **demo application second**. It focuses on how a multi-agent review pipeline is designed, coordinated, and exposed as a usable product.
 
 `PR diff -> Orchestrator -> Specialized Agents -> Aggregator -> Structured report`
+
+## Recruiter Snapshot
+
+- **What it does:** reviews GitHub pull requests with multiple AI agents instead of a single generic reviewer
+- **Why it matters:** demonstrates practical LLM application design, async orchestration, modular architecture, and productization
+- **Tech highlights:** FastAPI, Streamlit, Pydantic, GitHub integration, provider abstraction, structured evaluation-friendly outputs
 
 ## Why This Project Exists
 
