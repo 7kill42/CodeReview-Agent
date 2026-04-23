@@ -1,7 +1,12 @@
 # CodeReview-Agent
 
-> 多智能体 AI 代码审查系统。
-> 输入一个 GitHub PR URL，自动拉取 diff、并行运行四个专项审查 Agent，最终输出结构化报告并可回写至 GitHub。
+> 面向 GitHub Pull Request 的多智能体 AI 代码审查系统。输入一个 PR URL 后，系统会自动拉取 diff、并行运行专项审查 Agent，并输出结构化报告与 GitHub 评论回写结果。
+
+## Recruiter Snapshot
+
+- **项目定位：** 一个可展示 AI 应用落地能力的多智能体工程项目，而不只是单轮对话 Demo
+- **核心能力：** GitHub 集成、异步编排、专项 Agent 分工、结果聚合与严重级别仲裁
+- **技术亮点：** FastAPI、Streamlit、Pydantic、PostgreSQL、Redis、LLM Provider 抽象
 
 ---
 
@@ -481,4 +486,3 @@ pytest tests/ -v
 | 测试 | pytest + pytest-asyncio |
 | GitHub 集成 | PyGithub |
 | 通知 | httpx（Slack / 企业微信 Webhook） |
-
