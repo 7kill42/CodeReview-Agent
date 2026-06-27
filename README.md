@@ -8,6 +8,8 @@
 - **核心能力：** GitHub 集成、异步编排、专项 Agent 分工、结果聚合与严重级别仲裁
 - **技术亮点：** FastAPI、Streamlit、Pydantic、PostgreSQL、Redis、LLM Provider 抽象
 
+招聘/面试视角速览见：[docs/recruiter_brief.md](docs/recruiter_brief.md)。
+
 ---
 
 ## 目录
